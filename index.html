@@ -1,4 +1,49 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex"><title>OpenSheaf unlock</title></head>
-<body><p>This origin serves only the passkey unlock page of <a href="https://opensheaf.org/tools.html">osheaf</a>, which opens it itself.</p></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Unlock OpenSheaf keys</title>
+<link rel="icon" href="opensheaf-symbol.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="unlock.js"></script>
+</head>
+<body>
+<header class="site">
+  <span class="brand"><img class="symbol" src="opensheaf-symbol.svg" alt="" width="20" height="20">OpenSheaf unlock</span>
+</header>
+<main>
+  <h1>Unlock OpenSheaf keys</h1>
+  <div id="request" hidden>
+    <p class="lead"><code>osheaf</code>, on this computer, asks to <span id="what"></span>:</p>
+    <p>owner <code id="owner"></code></p>
+    <div class="notice code-check">
+      <p>Confirmation code</p>
+      <p class="code" id="code"></p>
+      <p><label><input type="checkbox" id="same"> The terminal shows the same code</label></p>
+    </div>
+    <p>If you did not just run <code>osheaf key enroll</code> or a command that needs your keys, or if the
+    terminal shows another code, close this page. The secret goes only to <code>osheaf</code> on this
+    computer (<code>127.0.0.1</code>), encrypted to a one-time key of <code>osheaf</code>, never to a server;
+    the passphrase keeps working.</p>
+    <ol id="steps" class="progress">
+      <li id="step-click">Check the code, then click Unlock.</li>
+      <li>Waiting for Touch ID…</li>
+      <li>Sending the key to <code>osheaf</code> on this computer…</li>
+    </ol>
+    <p class="controls"><button id="go" class="primary" type="button" disabled>Unlock</button>
+    <button id="cancel" type="button">Use the passphrase instead</button></p>
+  </div>
+  <div id="status" hidden></div>
+  <p class="controls"><button id="tell" type="button" hidden>Tell osheaf to ask for the passphrase</button></p>
+  <noscript><p>This page needs JavaScript.</p></noscript>
+</main>
+<footer class="site">
+  <p>Passkey unlock of <a href="https://github.com/opensheaf/opensheaf-py">osheaf</a> key wallets ·
+  <a href="https://github.com/opensheaf/unlock">source code</a> (GPL-3.0-or-later).</p>
+</footer>
+</body>
+</html>

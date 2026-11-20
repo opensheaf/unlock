@@ -1,0 +1,115 @@
+/* The passkey unlock page of OpenSheaf, in the design of opensheaf.org (its --os-*
+   variables), with the system's fonts: the page loads nothing from another origin. */
+:root {
+    color-scheme: light;
+    --os-paper: #f9f8f5;
+    --os-surface: #f1efea;
+    --os-rule: #dedbd3;
+    --os-ink: #171716;
+    --os-muted: #6a6861;
+    --os-faint: #a09d95;
+    --os-ok: #2c6a3e;
+    --os-ok-bg: #e6efe4;
+    --os-bad: #9d2b22;
+    --os-bad-bg: #f6e4e0;
+    --os-warn: #7d5200;
+    --os-warn-bg: #f5ecd6;
+    --os-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --os-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --os-paper: #12141a;
+        --os-surface: #1b1e25;
+        --os-rule: #31353e;
+        --os-ink: #e6e7ea;
+        --os-muted: #9a9ea8;
+        --os-faint: #646975;
+        --os-ok: #93cfa1;
+        --os-ok-bg: #182a23;
+        --os-bad: #eda59c;
+        --os-bad-bg: #342025;
+        --os-warn: #e7c277;
+        --os-warn-bg: #2d281c;
+    }
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --os-paper: #12141a;
+    --os-surface: #1b1e25;
+    --os-rule: #31353e;
+    --os-ink: #e6e7ea;
+    --os-muted: #9a9ea8;
+    --os-faint: #646975;
+    --os-ok: #93cfa1;
+    --os-ok-bg: #182a23;
+    --os-bad: #eda59c;
+    --os-bad-bg: #342025;
+    --os-warn: #e7c277;
+    --os-warn-bg: #2d281c;
+}
+@media print {
+    :root, :root[data-theme] {
+        color-scheme: light !important;
+        --os-paper: #fff !important;
+        --os-surface: #fff !important;
+        --os-rule: #999 !important;
+        --os-ink: #000 !important;
+        --os-muted: #333 !important;
+        --os-faint: #666 !important;
+        --os-ok: #000 !important;
+        --os-ok-bg: #fff !important;
+        --os-bad: #000 !important;
+        --os-bad-bg: #fff !important;
+        --os-warn: #000 !important;
+        --os-warn-bg: #fff !important;
+    }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--os-paper); color: var(--os-ink); font: 16px/1.6 var(--os-sans);
+       -webkit-font-smoothing: antialiased; }
+main, header.site, footer.site { max-width: 50rem; margin: 0 auto; padding-left: 16px; padding-right: 16px; }
+main { padding-bottom: 4rem; }
+a, a:visited { color: inherit; text-decoration: underline; text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em; text-decoration-color: var(--os-faint); }
+a:hover, a:focus { text-decoration-color: currentColor; }
+:focus-visible { outline: 1.5px solid var(--os-ink); outline-offset: 3px; }
+h1 { font-size: 2rem; font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; margin: 0.5em 0 0.4em; }
+code { font-family: var(--os-mono); font-size: 0.85em; font-variant-ligatures: none; overflow-wrap: anywhere; }
+.lead { color: var(--os-muted); }
+
+header.site { display: flex; align-items: center; padding-top: 1.4rem; }
+header.site .brand { display: inline-flex; align-items: center; gap: 0.45em; font-size: 1.05rem; }
+img.symbol { width: 20px; height: 20px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) img.symbol { filter: invert(1); } }
+:root[data-theme="dark"] img.symbol { filter: invert(1); }
+footer.site { color: var(--os-muted); font-size: 0.78rem; line-height: 1.5; padding-bottom: 2.5rem; }
+footer.site a { color: inherit; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 0.5em; align-items: center; margin: 0.8em 0; }
+input, button { font: inherit; color: inherit; }
+button { padding: 0.4em 0.9em; border: 1px solid var(--os-rule); border-radius: 4px; background: var(--os-paper);
+  cursor: pointer; }
+button:hover { border-color: var(--os-muted); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: var(--os-ink); border-color: var(--os-ink); color: var(--os-paper); font-weight: 600; }
+
+.notice { margin: 1em 0; padding: 0.8em 1.1em; border-radius: 4px; background: var(--os-surface); }
+.notice.ok { background: var(--os-ok-bg); }
+.notice.bad { background: var(--os-bad-bg); }
+.notice.warn { background: var(--os-warn-bg); }
+.notice p { margin: 0.3em 0; }
+.code-check p:first-child { color: var(--os-muted); font-size: 0.85rem; }
+.code { font-family: var(--os-mono); font-size: 2rem; font-weight: 700; letter-spacing: 0.08em; }
+.code-check label { display: inline-flex; gap: 0.5em; align-items: center; cursor: pointer; }
+.code-check input { width: 1.1em; height: 1.1em; }
+
+ol.progress { padding-left: 1.4em; color: var(--os-faint); }
+ol.progress > li { margin: 0.3em 0; }
+ol.progress > li.done { color: var(--os-muted); }
+ol.progress > li.done::after { content: " \2713"; color: var(--os-ok); }
+ol.progress > li.now { color: var(--os-ink); font-weight: 600; }
+@media (max-width: 40rem) { h1 { font-size: 1.6rem; } .code { font-size: 1.6rem; } }
