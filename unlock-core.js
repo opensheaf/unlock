@@ -25,10 +25,11 @@
 // when osheaf ends.
 
 // A page (the OpenSheaf manager) opens it as a popup instead, at
-//   https://unlock.opensheaf.org/#mode=popup&origin=<the page's origin>
+//   https://unlock.opensheaf.org/#mode=popup|popup-enroll&origin=<the page's origin>
 // and the request and the answer go by window messages, never through an
 // address: see POPUP_OPENERS below. The answer is sealed as for osheaf, with
-// the mode "popup" in the authenticated data.
+// the mode ("popup" to unlock, "popup-enroll" to create a passkey) in the
+// authenticated data.
 //
 // The relying party of the passkeys is the origin of this page, which serves
 // nothing else. Passkeys made earlier for "opensheaf.org" (from
@@ -51,8 +52,14 @@ const MAX_CREDS = 16;
 // window messages, each checking the origin of what it receives and naming
 // the origin of what it sends. Only the origins below may open it so; a page
 // served from this computer (localhost, 127.0.0.1), for trying the page
-// out, may be opened by another page of this computer.
-export const POPUP_OPENERS = ["https://opensheaf.org"];
+// out, may be opened by another page of this computer. The manager has an
+// origin of its own, so that no other page of the project's sites (the
+// archives served from opensheaf.org, for instance) may open this one.
+export const POPUP_OPENERS = ["https://manager.opensheaf.org"];
+// The modes of a popup: "popup" unlocks (cred: the passkeys that may
+// answer), "popup-enroll" creates a passkey (cred: those the owner has
+// already, excluded, possibly none) and derives its secret.
+export const POPUP_MODES = ["popup", "popup-enroll"];
 export const MESSAGES = { ready: "opensheaf-unlock-ready", request: "opensheaf-unlock-request",
                           answer: "opensheaf-unlock-answer", done: "opensheaf-unlock-done" };
 const LOCAL = /^http:\/\/(localhost|127\.0\.0\.1)(:[0-9]{1,5})?$/;
@@ -81,30 +88,37 @@ export function parseParams(fragment, pageOrigin = "") {
   const q = new URLSearchParams(String(fragment).replace(/^#/, ""));
   const seen = new Set();
   const mode = q.get("mode");
+  const popup = POPUP_MODES.includes(mode);
   for (const k of q.keys()) {
-    if (!(mode === "popup" ? ["mode", "origin"].includes(k) : PARAMS.has(k))) throw new Error(`unknown parameter: ${k}`);
+    if (!(popup ? ["mode", "origin"].includes(k) : PARAMS.has(k))) throw new Error(`unknown parameter: ${k}`);
     if (seen.has(k)) throw new Error(`parameter given twice: ${k}`);
     seen.add(k);
   }
-  if (mode === "popup") {
+  if (popup) {
     const origin = q.get("origin") || "";
     if (!openerAllowed(origin, pageOrigin)) throw new Error("not a page that may ask for the keys: " + origin.slice(0, 80));
     return { mode, origin };
   }
-  if (mode !== "enroll" && mode !== "unlock") throw new Error("mode must be enroll, unlock or popup");
+  if (mode !== "enroll" && mode !== "unlock") throw new Error("mode must be enroll, unlock, popup or popup-enroll");
   const port = q.get("port") || "";
   if (!/^[0-9]{4,5}$/.test(port) || +port < 1024 || +port > 65535) throw new Error("not a port of osheaf: " + port);
   return { ...checkRequest(mode, q.get("state"), q.get("pk"), q.get("owner"), q.has("cred") ? q.get("cred") : null), port: +port };
 }
 
 // The request of a page that opened this one as a popup: a window message
-// {type, state, pk, owner, cred}, checked as the fragment of osheaf is.
-export function parseRequest(data) {
+// {type, state, pk, owner, cred}, checked as the fragment of osheaf is, for
+// the mode of the popup's address.
+export function isEnroll(mode) {
+  return mode === "enroll" || mode === "popup-enroll";
+}
+
+export function parseRequest(data, mode = "popup") {
+  if (!POPUP_MODES.includes(mode)) throw new Error("not a mode of a popup");
   if (!data || typeof data !== "object" || data.type !== MESSAGES.request) throw new Error("not a request");
   const known = new Set(["type", "state", "pk", "owner", "cred"]);
   for (const k of Object.keys(data)) if (!known.has(k)) throw new Error(`unknown field: ${k}`);
   for (const k of ["state", "pk", "owner", "cred"]) if (typeof data[k] !== "string") throw new Error(`no ${k}`);
-  return checkRequest("popup", data.state, data.pk, data.owner, data.cred);
+  return checkRequest(mode, data.state, data.pk, data.owner, data.cred);
 }
 
 function checkRequest(mode, stateGiven, pkGiven, ownerGiven, credGiven) {
@@ -115,8 +129,8 @@ function checkRequest(mode, stateGiven, pkGiven, ownerGiven, credGiven) {
   if (!pk || pk.length !== 32) throw new Error("not a public key of osheaf");
   const owner = ownerGiven || "";
   if (!OWNER.test(owner)) throw new Error("not an owner name");
-  const credIds = credGiven !== null ? credGiven.split(",") : [];
-  if (mode !== "enroll" && credIds.length === 0) throw new Error("no passkey to unlock with");
+  const credIds = credGiven !== null && credGiven !== "" ? credGiven.split(",") : [];
+  if (!isEnroll(mode) && credIds.length === 0) throw new Error("no passkey to unlock with");
   if (credIds.length > MAX_CREDS) throw new Error("too many passkeys");
   const creds = credIds.map((c) => {
     let b;

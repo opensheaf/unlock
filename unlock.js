@@ -3,7 +3,8 @@
 // until the user has checked the code and clicked, calls WebAuthn, encrypts
 // the secret to the one-time key of osheaf, and goes to osheaf on 127.0.0.1
 // with it. It never goes there without a click, and sends nothing anywhere
-// else. For the OpenSheaf manager, it runs as a popup (popup() below).
+// else. For the OpenSheaf manager, it runs as a popup (popup() below), to
+// unlock or to create a passkey.
 
 // First of all: the request leaves the address bar and the history.
 const FRAGMENT = location.hash;
@@ -11,7 +12,8 @@ const QUERY = location.search;
 if (FRAGMENT || QUERY) history.replaceState(null, "", location.pathname);
 
 import { parseParams, parseRequest, expectedSalt, confirmationCode, createOptions, getOptions, prfSupported, prfEnabled,
-         prfSecret, seal, answerUrl, shortName, x25519Available, b64urlEncode, RP_ID, MESSAGES } from "./unlock-core.js";
+         prfSecret, seal, answerUrl, shortName, x25519Available, b64urlEncode, isEnroll, RP_ID, MESSAGES,
+         POPUP_MODES } from "./unlock-core.js";
 
 const $ = (id) => document.getElementById(id);
 const KNOWN_GOOD = "known to work: Safari 17+, Chrome 133+, Firefox 130+";
@@ -52,7 +54,7 @@ async function derive(params, salt, creds) {
 
 async function run(params) {
   const salt = await expectedSalt(params.owner);
-  if (params.mode === "enroll") {
+  if (isEnroll(params.mode)) {
     if ((await prfSupported()) === false) throw new Error("this browser does not support the PRF extension of passkeys");
     let created;
     try {
@@ -60,8 +62,11 @@ async function run(params) {
         publicKey: await createOptions(params.owner, challenge(), params.creds) });
     } catch (e) {
       if (e && e.name === "InvalidStateError") {
-        throw new Error("this passkey provider holds a passkey of this owner already: use that one (osheaf key "
-                        + "enroll, without --new-passkey), or choose another provider");
+        throw new Error(params.mode === "enroll"
+          ? "this passkey provider holds a passkey of this owner already: use that one (osheaf key "
+            + "enroll, without --new-passkey), or choose another provider"
+          : "this passkey provider holds a passkey of this owner already: use that one (unlock with it in the "
+            + "manager), or choose another provider");
       }
       throw e;
     }
@@ -88,8 +93,8 @@ async function main() {
     say("This page was not opened by osheaf as expected, and does nothing: " + e.message + ".", "bad");
     return;
   }
-  if (params.mode === "popup") {
-    popup(params.origin);
+  if (POPUP_MODES.includes(params.mode)) {
+    popup(params.origin, params.mode);
     return;
   }
   if (!(await x25519Available())) {
@@ -142,8 +147,10 @@ main();
 // window that opened this one, from the origin the address names (which
 // parseParams has checked against the list), by a window message; the
 // answer goes back to that window, to that origin only. Nothing is taken
-// from another window or origin, and nothing is sent before a click.
-function popup(origin) {
+// from another window or origin, and nothing is sent before a click. MODE
+// is that of the address: "popup" to unlock, "popup-enroll" to create a
+// passkey; it is in the authenticated data of the answer.
+function popup(origin, mode) {
   const opener = window.opener;
   if (!opener) {
     say("This page was opened for the OpenSheaf manager, but not by it, and does nothing: open it from the manager.", "bad");
@@ -161,7 +168,7 @@ function popup(origin) {
     }
     if (request) return;
     try {
-      request = parseRequest(data);
+      request = parseRequest(data, mode);
     } catch (e) {
       say(`The manager sent a request this page does not take (${e.message}), and nothing is done.`, "bad");
       return;
@@ -182,19 +189,29 @@ async function showPopup(request, origin, post) {
   const owner = $("owner");
   owner.textContent = shortName(request.owner);
   owner.title = request.owner;
+  const enroll = isEnroll(request.mode);
   $("who").textContent = `The OpenSheaf manager (${origin})`;
-  $("what").textContent = "sign with the keys of this owner, which your passkey unlocks";
+  $("what").textContent = enroll
+    ? `create a passkey for ${RP_ID}, named after this owner, which will unlock its keys in the key wallet`
+    : "sign with the keys of this owner, which your passkey unlocks";
   const code = await confirmationCode(request.state, request.pk);
   $("code").textContent = code;
   $("same-box").hidden = true;
   $("cli-note").hidden = true;
   $("popup-note").hidden = false;
-  $("step-click").textContent = "Click Unlock, then use your passkey.";
+  if (enroll) {
+    $("popup-note").textContent = "If you did not just ask the manager to set up a passkey, close this window. The "
+      + "passkey is made here, then used once more to derive its secret (Touch ID twice). Type this code in the "
+      + "manager: it opens the secret only with it. The secret goes only to the manager's page, at the address "
+      + "above, encrypted to a one-time key of that page, never to a server.";
+  }
+  const label = enroll ? "Create the passkey" : "Unlock";
+  $("step-click").textContent = `Click ${label}, then use your passkey.`;
   $("step-send").textContent = `Sending the key to the manager: type ${code} there.`;
   $("request").hidden = false;
   step(0);
   const go = $("go"), cancel = $("cancel");
-  go.textContent = "Unlock";
+  go.textContent = label;
   go.disabled = false;
   cancel.textContent = "Cancel";
   go.onclick = async () => {
@@ -204,11 +221,11 @@ async function showPopup(request, origin, post) {
     try {
       const got = await run(request);
       step(2);
-      const sealed = await seal(got.secret, request.pk, request.state, "popup", request.owner, got.cred);
+      const sealed = await seal(got.secret, request.pk, request.state, request.mode, request.owner, got.cred);
       got.secret.fill(0);
       post({ type: MESSAGES.answer, state: request.state, cred: got.cred, epk: b64urlEncode(sealed.epk),
              ct: b64urlEncode(sealed.ct), tag: b64urlEncode(sealed.tag) });
-      say(`Done here. Type the code ${code} in the manager; this window closes once it has the key.`);
+      say(`Done here. Type the code ${code} in the manager; this window closes once it has the ${enroll ? "secret" : "key"}.`);
     } catch (e) {
       step(0);
       say(`${e.name || "Error"}: ${e.message}. Try again, or cancel.`, "bad");
@@ -216,7 +233,7 @@ async function showPopup(request, origin, post) {
     }
   };
   cancel.onclick = () => {
-    failed("the user did not unlock");
+    failed(enroll ? "the user did not create a passkey" : "the user did not unlock");
     window.close();
   };
 }

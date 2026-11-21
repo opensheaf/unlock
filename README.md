@@ -38,18 +38,21 @@ is shared with the tests of opensheaf-py.
 
 ## The popup of the OpenSheaf manager
 
-The [manager](https://opensheaf.org/manager/) writes archives from the
+The [manager](https://manager.opensheaf.org/) writes archives from the
 browser, signing with the owner's current keys from its key wallet, which
 a passkey opens. A page of another origin cannot use these passkeys, so
 the manager opens this page in a window of its own:
 
-    https://unlock.opensheaf.org/#mode=popup&origin=https%3A%2F%2Fopensheaf.org
+    https://unlock.opensheaf.org/#mode=popup&origin=https%3A%2F%2Fmanager.opensheaf.org
 
 and the two talk by window messages (`postMessage`), never through an
 address. The origin must be on the list `POPUP_OPENERS` of
-`unlock-core.js` (`https://opensheaf.org`; a page served from
+`unlock-core.js` (`https://manager.opensheaf.org`; a page served from
 `localhost` or `127.0.0.1` may be opened by another such page, for
-trying it out). The page then:
+trying it out). The manager has an origin of its own so that no other
+page of the project's sites, such as the archives and collections served
+under `https://opensheaf.org/`, can open this page and ask for the
+passkey. The page then:
 
 1. tells its opener it is ready, `{type: "opensheaf-unlock-ready"}`,
    with that origin as the target: a page of another origin that opened
@@ -68,8 +71,22 @@ trying it out). The page then:
    with it, and then sends `{type: "opensheaf-unlock-done"}`, upon which
    the page closes.
 
-A test vector of the popup's answer is shared with the tests of
-opensheaf-js (`tests/github.test.js`), which play the manager's side.
+To set up a key wallet from the browser, the manager opens the page with
+`#mode=popup-enroll&origin=...` instead. The exchange is the same, but the
+request's `cred` names the passkeys the owner has already (possibly none),
+which WebAuthn is asked to exclude; the page creates a passkey for
+`unlock.opensheaf.org` named after the owner, as for `osheaf key enroll`
+(refusing a passkey whose PRF extension is not enabled), derives its
+secret, and seals it with the mode `popup-enroll` in the authenticated
+data: an answer of one mode is never taken for another. The manager then
+adds the passkey's lock to the keys of the wallet, which it opens with the
+passphrase. When the owner has a passkey already, the manager uses the
+mode `popup` to unlock with it, as `osheaf key enroll` without
+`--new-passkey` does.
+
+A test vector of the popup's answer, in both modes, is shared with the
+tests of opensheaf-js (`tests/github.test.js`), which play the manager's
+side.
 
 Its content security policy lets it load nothing from another origin,
 reach no server (`connect-src 'none'`) and send no form

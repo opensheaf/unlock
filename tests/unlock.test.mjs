@@ -179,14 +179,20 @@ const POPUP = {
   secret: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
   ct: "5G1AcynkQgGMF4zDTK5jAHzpINvJJpVIKW_a172XDTY", tag: "x9nebDAtOsMhfeqtGvRgbjU2r828_nAI4qzFA4JSt6U",
   code: "329 875",
+  enrollTag: "lTxj4rxHKf2zYq2Z6qJP-tfFeHEIEhvDgxiGvgR9zCI",
 };
 
 test("a popup is asked for by a page of the list only, by its origin", () => {
-  assert.deepEqual(POPUP_OPENERS, ["https://opensheaf.org"]);
-  assert.deepEqual(parseParams("#mode=popup&origin=https%3A%2F%2Fopensheaf.org"), { mode: "popup", origin: "https://opensheaf.org" });
-  for (const bad of ["#mode=popup&origin=https%3A%2F%2Fevil.example", "#mode=popup&origin=https%3A%2F%2Fopensheaf.org.evil.example",
-                     "#mode=popup&origin=http%3A%2F%2Fopensheaf.org", "#mode=popup", "#mode=popup&origin=https%3A%2F%2Fopensheaf.org%2F",
-                     "#mode=popup&origin=https%3A%2F%2Fopensheaf.org&state=" + state,
+  assert.deepEqual(POPUP_OPENERS, ["https://manager.opensheaf.org"]);
+  const M = "https%3A%2F%2Fmanager.opensheaf.org";
+  assert.deepEqual(parseParams("#mode=popup&origin=" + M), { mode: "popup", origin: "https://manager.opensheaf.org" });
+  assert.deepEqual(parseParams("#mode=popup-enroll&origin=" + M), { mode: "popup-enroll", origin: "https://manager.opensheaf.org" });
+  for (const bad of ["#mode=popup&origin=https%3A%2F%2Fevil.example", "#mode=popup&origin=https%3A%2F%2Fmanager.opensheaf.org.evil.example",
+                     "#mode=popup&origin=http%3A%2F%2Fmanager.opensheaf.org", "#mode=popup", "#mode=popup&origin=" + M + "%2F",
+                     "#mode=popup&origin=" + M + "&state=" + state,
+                     // the site of the specification and of archives on opensheaf.org: no longer
+                     "#mode=popup&origin=https%3A%2F%2Fopensheaf.org", "#mode=popup-enroll&origin=https%3A%2F%2Fopensheaf.org",
+                     "#mode=popup-unlock&origin=" + M, "#mode=popup-enroll&origin=" + M + "&cred=" + cred,
                      "#mode=popup&origin=http%3A%2F%2Flocalhost%3A8000"]) {
     assert.throws(() => parseParams(bad, "https://unlock.opensheaf.org"), Error, bad);
   }
@@ -205,6 +211,16 @@ test("the request of the popup, by a window message, is checked as osheaf's", ()
                      { type: MESSAGES.request, state, pk, owner }, { ...good, cred: ["a"] }]) {
     assert.throws(() => parseRequest(bad), Error, JSON.stringify(bad));
   }
+  assert.throws(() => parseRequest(good, "unlock"), /not a mode of a popup/);
+});
+
+test("the request of a popup that enrolls: the passkeys to exclude, possibly none", () => {
+  const good = { type: MESSAGES.request, state, pk, owner, cred: "" };
+  const r = parseRequest(good, "popup-enroll");
+  assert.equal(r.mode, "popup-enroll");
+  assert.deepEqual(r.creds, []);
+  assert.equal(parseRequest({ ...good, cred }, "popup-enroll").creds.length, 1);
+  assert.throws(() => parseRequest({ ...good, cred: "AAAA" }, "popup-enroll"), /not a credential/);
 });
 
 test("the hand-off of a popup: the test vector shared with opensheaf-js", async () => {
@@ -219,4 +235,7 @@ test("the hand-off of a popup: the test vector shared with opensheaf-js", async 
   assert.equal(await confirmationCode(v.state, bytes("pk")), v.code);
   const asUnlock = await seal(bytes("secret"), bytes("pk"), v.state, "unlock", v.owner, v.cred, { privateKey, publicKey });
   assert.notEqual(b64urlEncode(asUnlock.tag), v.tag);
+  // the same secret sealed by a popup that enrolls: the same ciphertext, another tag
+  const asEnroll = await seal(bytes("secret"), bytes("pk"), v.state, "popup-enroll", v.owner, v.cred, { privateKey, publicKey });
+  assert.deepEqual([b64urlEncode(asEnroll.ct), b64urlEncode(asEnroll.tag)], [v.ct, v.enrollTag]);
 });
