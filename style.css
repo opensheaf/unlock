@@ -113,3 +113,16 @@ ol.progress > li.done { color: var(--os-muted); }
 ol.progress > li.done::after { content: " \2713"; color: var(--os-ok); }
 ol.progress > li.now { color: var(--os-ink); font-weight: 600; }
 @media (max-width: 40rem) { h1 { font-size: 1.6rem; } .code { font-size: 1.6rem; } }
+
+/* The theme button of the OpenSheaf site (theme.js): a half-lit circle at
+   the top right of the window, switching between light and dark. */
+.theme-control { position: fixed; top: 0.7rem; right: 0.8rem; z-index: 40; margin: 0; }
+.theme-control .theme-toggle { display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
+    border: 0; border-radius: 50%; background: var(--os-paper); color: var(--os-faint); cursor: pointer; }
+.theme-control .theme-toggle::before { content: ""; width: 13px; height: 13px;
+    border: 1.5px solid currentColor; border-radius: 50%;
+    background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+.theme-control .theme-toggle:hover { color: var(--os-ink); }
+.theme-control .theme-toggle:focus-visible { outline: 1.5px solid var(--os-ink); outline-offset: 2px; }
+@media screen and (max-width: 60rem) { header.site { padding-right: 3rem; } }
+@media print { .theme-control { display: none !important; } }
