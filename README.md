@@ -36,6 +36,41 @@ XOR the encryption key, `tag` HMAC-SHA256 of `mode|owner|cred|pk|epk` and
 `ct` (encrypt-then-MAC, so that `osheaf` needs no AES-GCM). A test vector
 is shared with the tests of opensheaf-py.
 
+## The popup of the OpenSheaf manager
+
+The [manager](https://opensheaf.org/manager/) writes archives from the
+browser, signing with the owner's current keys from its key wallet, which
+a passkey opens. A page of another origin cannot use these passkeys, so
+the manager opens this page in a window of its own:
+
+    https://unlock.opensheaf.org/#mode=popup&origin=https%3A%2F%2Fopensheaf.org
+
+and the two talk by window messages (`postMessage`), never through an
+address. The origin must be on the list `POPUP_OPENERS` of
+`unlock-core.js` (`https://opensheaf.org`; a page served from
+`localhost` or `127.0.0.1` may be opened by another such page, for
+trying it out). The page then:
+
+1. tells its opener it is ready, `{type: "opensheaf-unlock-ready"}`,
+   with that origin as the target: a page of another origin that opened
+   it hears nothing;
+2. takes one request, `{type: "opensheaf-unlock-request", state, pk,
+   owner, cred}`, from its opener only (`event.source`) and from that
+   origin only (`event.origin`), checked as the fragment of `osheaf` is;
+3. shows the code of six digits, asks for the passkey on a click, and
+   seals its secret as for `osheaf` (the same X25519, HKDF and
+   encrypt-then-MAC), with the mode `popup` in the authenticated data, so
+   that an answer for a popup is never one for `osheaf`, nor the other
+   way round;
+4. posts `{type: "opensheaf-unlock-answer", state, epk, ct, tag, cred}`
+   (or `{..., error}`) to its opener, to that origin only, and waits; the
+   person types the code into the manager, which opens the answer only
+   with it, and then sends `{type: "opensheaf-unlock-done"}`, upon which
+   the page closes.
+
+A test vector of the popup's answer is shared with the tests of
+opensheaf-js (`tests/github.test.js`), which play the manager's side.
+
 Its content security policy lets it load nothing from another origin,
 reach no server (`connect-src 'none'`) and send no form
 (`form-action 'none'`). It uses the system's fonts.
@@ -46,7 +81,8 @@ reach no server (`connect-src 'none'`) and send no form
 
 `tests/unlock.test.mjs` tests `unlock-core.js` (no browser needed), and
 `tests/page.test.mjs` runs `unlock.js` against a double of the DOM and of
-WebAuthn: no browser, no passkey.
+WebAuthn, and, for the popup, of the manager's window: no browser, no
+passkey.
 
 ## Licence
 

@@ -24,6 +24,12 @@
 // ciphertext that the private key of osheaf alone opens, which is forgotten
 // when osheaf ends.
 
+// A page (the OpenSheaf manager) opens it as a popup instead, at
+//   https://unlock.opensheaf.org/#mode=popup&origin=<the page's origin>
+// and the request and the answer go by window messages, never through an
+// address: see POPUP_OPENERS below. The answer is sealed as for osheaf, with
+// the mode "popup" in the authenticated data.
+//
 // The relying party of the passkeys is the origin of this page, which serves
 // nothing else. Passkeys made earlier for "opensheaf.org" (from
 // opensheaf.org/manager/unlock.html) are not used here: osheaf asks the
@@ -40,6 +46,22 @@ const B64URL = /^[A-Za-z0-9_-]+$/;
 const PARAMS = new Set(["mode", "port", "state", "pk", "owner", "cred"]);
 const MAX_CREDS = 16;
 
+// The popup of a page (the OpenSheaf manager): the page opens this one in a
+// window of its own at #mode=popup&origin=<its origin>, and the two talk by
+// window messages, each checking the origin of what it receives and naming
+// the origin of what it sends. Only the origins below may open it so; a page
+// served from this computer (localhost, 127.0.0.1), for trying the page
+// out, may be opened by another page of this computer.
+export const POPUP_OPENERS = ["https://opensheaf.org"];
+export const MESSAGES = { ready: "opensheaf-unlock-ready", request: "opensheaf-unlock-request",
+                          answer: "opensheaf-unlock-answer", done: "opensheaf-unlock-done" };
+const LOCAL = /^http:\/\/(localhost|127\.0\.0\.1)(:[0-9]{1,5})?$/;
+
+export function openerAllowed(origin, pageOrigin = "") {
+  if (POPUP_OPENERS.includes(origin)) return true;
+  return LOCAL.test(pageOrigin) && LOCAL.test(origin);
+}
+
 export function b64urlEncode(bytes) {
   let s = "";
   for (const b of new Uint8Array(bytes)) s += String.fromCharCode(b);
@@ -55,27 +77,46 @@ export function b64urlDecode(text) {
 // The request of osheaf, from the fragment of the page ("#..." or "...");
 // throws an Error that says what is wrong, and then the page does nothing
 // else.
-export function parseParams(fragment) {
+export function parseParams(fragment, pageOrigin = "") {
   const q = new URLSearchParams(String(fragment).replace(/^#/, ""));
   const seen = new Set();
+  const mode = q.get("mode");
   for (const k of q.keys()) {
-    if (!PARAMS.has(k)) throw new Error(`unknown parameter: ${k}`);
+    if (!(mode === "popup" ? ["mode", "origin"].includes(k) : PARAMS.has(k))) throw new Error(`unknown parameter: ${k}`);
     if (seen.has(k)) throw new Error(`parameter given twice: ${k}`);
     seen.add(k);
   }
-  const mode = q.get("mode");
-  if (mode !== "enroll" && mode !== "unlock") throw new Error("mode must be enroll or unlock");
+  if (mode === "popup") {
+    const origin = q.get("origin") || "";
+    if (!openerAllowed(origin, pageOrigin)) throw new Error("not a page that may ask for the keys: " + origin.slice(0, 80));
+    return { mode, origin };
+  }
+  if (mode !== "enroll" && mode !== "unlock") throw new Error("mode must be enroll, unlock or popup");
   const port = q.get("port") || "";
   if (!/^[0-9]{4,5}$/.test(port) || +port < 1024 || +port > 65535) throw new Error("not a port of osheaf: " + port);
-  const state = q.get("state") || "";
+  return { ...checkRequest(mode, q.get("state"), q.get("pk"), q.get("owner"), q.has("cred") ? q.get("cred") : null), port: +port };
+}
+
+// The request of a page that opened this one as a popup: a window message
+// {type, state, pk, owner, cred}, checked as the fragment of osheaf is.
+export function parseRequest(data) {
+  if (!data || typeof data !== "object" || data.type !== MESSAGES.request) throw new Error("not a request");
+  const known = new Set(["type", "state", "pk", "owner", "cred"]);
+  for (const k of Object.keys(data)) if (!known.has(k)) throw new Error(`unknown field: ${k}`);
+  for (const k of ["state", "pk", "owner", "cred"]) if (typeof data[k] !== "string") throw new Error(`no ${k}`);
+  return checkRequest("popup", data.state, data.pk, data.owner, data.cred);
+}
+
+function checkRequest(mode, stateGiven, pkGiven, ownerGiven, credGiven) {
+  const state = stateGiven || "";
   if (!STATE.test(state)) throw new Error("not a state of osheaf");
   let pk;
-  try { pk = b64urlDecode(q.get("pk") || ""); } catch (_) { pk = null; }
+  try { pk = b64urlDecode(pkGiven || ""); } catch (_) { pk = null; }
   if (!pk || pk.length !== 32) throw new Error("not a public key of osheaf");
-  const owner = q.get("owner") || "";
+  const owner = ownerGiven || "";
   if (!OWNER.test(owner)) throw new Error("not an owner name");
-  const credIds = q.has("cred") ? q.get("cred").split(",") : [];
-  if (mode === "unlock" && credIds.length === 0) throw new Error("no passkey to unlock with");
+  const credIds = credGiven !== null ? credGiven.split(",") : [];
+  if (mode !== "enroll" && credIds.length === 0) throw new Error("no passkey to unlock with");
   if (credIds.length > MAX_CREDS) throw new Error("too many passkeys");
   const creds = credIds.map((c) => {
     let b;
@@ -83,7 +124,7 @@ export function parseParams(fragment) {
     if (!b || b.length < 16 || b.length > 1023) throw new Error("not a credential: " + c.slice(0, 40));
     return b;
   });
-  return { mode, port: +port, state, pk, owner, credIds, creds };
+  return { mode, state, pk, owner, credIds, creds };
 }
 
 async function sha256(subtle, bytes) {

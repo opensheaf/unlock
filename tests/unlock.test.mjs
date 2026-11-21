@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
 import { parseParams, expectedSalt, confirmationCode, callbackUrl, createOptions, getOptions, prfSecret,
          prfEnabled, prfSupported, answerUrl, seal, shortName, x25519Available, b64urlEncode, b64urlDecode,
-         associatedData, RP_ID } from "../unlock-core.js";
+         associatedData, RP_ID, parseRequest, openerAllowed, MESSAGES, POPUP_OPENERS } from "../unlock-core.js";
 
 const owner = "em4v3kp5btra7jlggxhvl5y6uluymzk2ezcdjg4pnptnk5tygora";
 const cred = b64urlEncode(new Uint8Array(20).fill(7));
@@ -168,4 +168,55 @@ test("PRF support and the PRF secret (WebAuthn mocked)", async () => {
   assert.equal(await prfSupported({ getClientCapabilities: async () => ({ "extension:prf": true }) }), true);
   assert.equal(await prfSupported({ getClientCapabilities: async () => ({}) }), null);
   assert.equal(await prfSupported({ getClientCapabilities: async () => { throw new Error("x"); } }), null);
+});
+
+// The popup of the OpenSheaf manager: the vector shared with the tests of
+// opensheaf-js (tests/github.test.js, VECTOR), which plays the manager's side.
+const POPUP = {
+  sk: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc", pk: "E75P6uryBMf9M1j8nAByGIHRdCeBKCJ-xnTzf3_pe20",
+  esk: "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk", epk: "V9tLNZ8jrl4Ubk4lEgVnBHIlBjSMFQwUdT0Mkz0E1CE",
+  state: "popup-state-of-the-tests", owner: "a".repeat(52), cred: "Y3JlZGVudGlhbC1vZi10aGUtdGVzdHM",
+  secret: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  ct: "5G1AcynkQgGMF4zDTK5jAHzpINvJJpVIKW_a172XDTY", tag: "x9nebDAtOsMhfeqtGvRgbjU2r828_nAI4qzFA4JSt6U",
+  code: "329 875",
+};
+
+test("a popup is asked for by a page of the list only, by its origin", () => {
+  assert.deepEqual(POPUP_OPENERS, ["https://opensheaf.org"]);
+  assert.deepEqual(parseParams("#mode=popup&origin=https%3A%2F%2Fopensheaf.org"), { mode: "popup", origin: "https://opensheaf.org" });
+  for (const bad of ["#mode=popup&origin=https%3A%2F%2Fevil.example", "#mode=popup&origin=https%3A%2F%2Fopensheaf.org.evil.example",
+                     "#mode=popup&origin=http%3A%2F%2Fopensheaf.org", "#mode=popup", "#mode=popup&origin=https%3A%2F%2Fopensheaf.org%2F",
+                     "#mode=popup&origin=https%3A%2F%2Fopensheaf.org&state=" + state,
+                     "#mode=popup&origin=http%3A%2F%2Flocalhost%3A8000"]) {
+    assert.throws(() => parseParams(bad, "https://unlock.opensheaf.org"), Error, bad);
+  }
+  // a page served from this computer, to try the manager out, from this computer only
+  assert.equal(parseParams("#mode=popup&origin=http%3A%2F%2Flocalhost%3A8000", "http://127.0.0.1:8001").origin, "http://localhost:8000");
+  assert.equal(openerAllowed("https://evil.example", "http://localhost:8001"), false);
+});
+
+test("the request of the popup, by a window message, is checked as osheaf's", () => {
+  const good = { type: MESSAGES.request, state, pk, owner, cred };
+  const r = parseRequest(good);
+  assert.equal(r.mode, "popup");
+  assert.equal(r.creds.length, 1);
+  for (const bad of [null, "x", { ...good, type: "other" }, { ...good, port: "1024" }, { ...good, cred: "" },
+                     { ...good, owner: owner.slice(1) }, { ...good, pk: "AAAA" }, { ...good, state: "short" },
+                     { type: MESSAGES.request, state, pk, owner }, { ...good, cred: ["a"] }]) {
+    assert.throws(() => parseRequest(bad), Error, JSON.stringify(bad));
+  }
+});
+
+test("the hand-off of a popup: the test vector shared with opensheaf-js", async () => {
+  const subtle = globalThis.crypto.subtle;
+  const v = POPUP;
+  const bytes = (k) => b64urlDecode(v[k]);
+  const privateKey = await subtle.importKey("jwk", { kty: "OKP", crv: "X25519", d: v.esk, x: v.epk },
+                                            { name: "X25519" }, false, ["deriveBits"]);
+  const publicKey = await subtle.importKey("raw", bytes("epk"), { name: "X25519" }, true, []);
+  const sealed = await seal(bytes("secret"), bytes("pk"), v.state, "popup", v.owner, v.cred, { privateKey, publicKey });
+  assert.deepEqual([b64urlEncode(sealed.epk), b64urlEncode(sealed.ct), b64urlEncode(sealed.tag)], [v.epk, v.ct, v.tag]);
+  assert.equal(await confirmationCode(v.state, bytes("pk")), v.code);
+  const asUnlock = await seal(bytes("secret"), bytes("pk"), v.state, "unlock", v.owner, v.cred, { privateKey, publicKey });
+  assert.notEqual(b64urlEncode(asUnlock.tag), v.tag);
 });

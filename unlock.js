@@ -1,17 +1,17 @@
-// The page of passkey unlock (see unlock-core.js): it takes the request of
+// The page of passkey unlock (see unlock-core.js). For osheaf, it takes the request of
 // osheaf out of the address, explains it, shows the confirmation code, waits
 // until the user has checked the code and clicked, calls WebAuthn, encrypts
 // the secret to the one-time key of osheaf, and goes to osheaf on 127.0.0.1
 // with it. It never goes there without a click, and sends nothing anywhere
-// else.
+// else. For the OpenSheaf manager, it runs as a popup (popup() below).
 
 // First of all: the request leaves the address bar and the history.
 const FRAGMENT = location.hash;
 const QUERY = location.search;
 if (FRAGMENT || QUERY) history.replaceState(null, "", location.pathname);
 
-import { parseParams, expectedSalt, confirmationCode, createOptions, getOptions, prfSupported, prfEnabled,
-         prfSecret, seal, answerUrl, shortName, x25519Available, b64urlEncode, RP_ID } from "./unlock-core.js";
+import { parseParams, parseRequest, expectedSalt, confirmationCode, createOptions, getOptions, prfSupported, prfEnabled,
+         prfSecret, seal, answerUrl, shortName, x25519Available, b64urlEncode, RP_ID, MESSAGES } from "./unlock-core.js";
 
 const $ = (id) => document.getElementById(id);
 const KNOWN_GOOD = "known to work: Safari 17+, Chrome 133+, Firefox 130+";
@@ -83,9 +83,13 @@ async function main() {
                                             + "update osheaf");
     if (!FRAGMENT) throw new Error("it was opened without a request");
     if (typeof PublicKeyCredential !== "function") throw new Error("this browser has no passkeys (WebAuthn)");
-    params = parseParams(FRAGMENT);
+    params = parseParams(FRAGMENT, location.origin);
   } catch (e) {
     say("This page was not opened by osheaf as expected, and does nothing: " + e.message + ".", "bad");
+    return;
+  }
+  if (params.mode === "popup") {
+    popup(params.origin);
     return;
   }
   if (!(await x25519Available())) {
@@ -133,3 +137,86 @@ async function main() {
 }
 
 main();
+
+// The popup of a page (the OpenSheaf manager): the request comes from the
+// window that opened this one, from the origin the address names (which
+// parseParams has checked against the list), by a window message; the
+// answer goes back to that window, to that origin only. Nothing is taken
+// from another window or origin, and nothing is sent before a click.
+function popup(origin) {
+  const opener = window.opener;
+  if (!opener) {
+    say("This page was opened for the OpenSheaf manager, but not by it, and does nothing: open it from the manager.", "bad");
+    return;
+  }
+  const post = (message) => opener.postMessage(message, origin);
+  let request = null;
+  window.addEventListener("message", async (event) => {
+    if (event.source !== opener || event.origin !== origin) return;
+    const data = event.data;
+    if (request && data && data.type === MESSAGES.done) {
+      say("The manager has the key. This window closes.");
+      window.close();
+      return;
+    }
+    if (request) return;
+    try {
+      request = parseRequest(data);
+    } catch (e) {
+      say(`The manager sent a request this page does not take (${e.message}), and nothing is done.`, "bad");
+      return;
+    }
+    await showPopup(request, origin, post);
+  });
+  post({ type: MESSAGES.ready });
+}
+
+async function showPopup(request, origin, post) {
+  const failed = (error) => post({ type: MESSAGES.answer, state: request.state, error });
+  if (!(await x25519Available())) {
+    say("This browser has no X25519 in WebCrypto, and cannot hand the key to the manager securely ("
+        + KNOWN_GOOD + ").", "bad");
+    failed("x25519-unavailable");
+    return;
+  }
+  const owner = $("owner");
+  owner.textContent = shortName(request.owner);
+  owner.title = request.owner;
+  $("who").textContent = `The OpenSheaf manager (${origin})`;
+  $("what").textContent = "sign with the keys of this owner, which your passkey unlocks";
+  const code = await confirmationCode(request.state, request.pk);
+  $("code").textContent = code;
+  $("same-box").hidden = true;
+  $("cli-note").hidden = true;
+  $("popup-note").hidden = false;
+  $("step-click").textContent = "Click Unlock, then use your passkey.";
+  $("step-send").textContent = `Sending the key to the manager: type ${code} there.`;
+  $("request").hidden = false;
+  step(0);
+  const go = $("go"), cancel = $("cancel");
+  go.textContent = "Unlock";
+  go.disabled = false;
+  cancel.textContent = "Cancel";
+  go.onclick = async () => {
+    go.disabled = cancel.disabled = true;
+    $("status").hidden = true;
+    step(1);
+    try {
+      const got = await run(request);
+      step(2);
+      const sealed = await seal(got.secret, request.pk, request.state, "popup", request.owner, got.cred);
+      got.secret.fill(0);
+      post({ type: MESSAGES.answer, state: request.state, cred: got.cred, epk: b64urlEncode(sealed.epk),
+             ct: b64urlEncode(sealed.ct), tag: b64urlEncode(sealed.tag) });
+      say(`Done here. Type the code ${code} in the manager; this window closes once it has the key.`);
+    } catch (e) {
+      step(0);
+      say(`${e.name || "Error"}: ${e.message}. Try again, or cancel.`, "bad");
+      go.disabled = cancel.disabled = false;
+    }
+  };
+  cancel.onclick = () => {
+    failed("the user did not unlock");
+    window.close();
+  };
+}
