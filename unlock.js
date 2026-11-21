@@ -52,6 +52,21 @@ async function derive(params, salt, creds) {
   return { cred: b64urlEncode(new Uint8Array(assertion.rawId)), secret: prfSecret(assertion) };
 }
 
+// Two owners at one touch (a request of version 2): one assertion, the
+// secret of each owner's salt, in the order of the request.
+async function deriveTwo(request) {
+  const [first, second] = await Promise.all(request.owners.map((o) => expectedSalt(o)));
+  const assertion = await navigator.credentials.get({ publicKey: getOptions(first, request.creds, challenge(), second) });
+  const secrets = [prfSecret(assertion, "first")];
+  try {
+    secrets.push(prfSecret(assertion, "second"));
+  } catch (e) {
+    secrets[0].fill(0);
+    throw e;
+  }
+  return { cred: b64urlEncode(new Uint8Array(assertion.rawId)), secrets };
+}
+
 async function run(params) {
   const salt = await expectedSalt(params.owner);
   if (isEnroll(params.mode)) {
@@ -205,13 +220,15 @@ async function showPopup(request, origin, post) {
     return;
   }
   const owner = $("owner");
-  owner.textContent = shortName(request.owner);
-  owner.title = request.owner;
+  const two = request.v === 2;
+  owner.textContent = two ? request.owners.map(shortName).join(" and ") : shortName(request.owner);
+  owner.title = two ? request.owners.join("\n") : request.owner;
   const enroll = isEnroll(request.mode);
   $("who").textContent = `The OpenSheaf manager (${origin})`;
   $("what").textContent = enroll
     ? `create a passkey for ${RP_ID}, named after this owner, which will unlock its keys in the key wallet`
-    : "sign with the keys of this owner, which your passkey unlocks";
+    : two ? "sign with the keys of these two owners, which your passkey unlocks with one touch"
+      : "sign with the keys of this owner, which your passkey unlocks";
   const code = await confirmationCode(request.state, request.pk);
   $("code").textContent = code;
   $("same-box").hidden = true;
@@ -237,6 +254,20 @@ async function showPopup(request, origin, post) {
     $("status").hidden = true;
     step(1);
     try {
+      if (two) {
+        const got = await deriveTwo(request);
+        step(2);
+        const sealed = [];
+        for (let k = 0; k < got.secrets.length; k++) {
+          const s = await seal(got.secrets[k], request.pk, request.state, request.mode, request.owners[k], got.cred);
+          got.secrets[k].fill(0);
+          sealed.push({ owner: request.owners[k], epk: b64urlEncode(s.epk), ct: b64urlEncode(s.ct), tag: b64urlEncode(s.tag) });
+        }
+        answered = true;
+        post({ type: MESSAGES.answer, v: 2, state: request.state, cred: got.cred, sealed });
+        say(`Done here. Type the code ${code} in the manager; this window closes once it has the keys.`);
+        return;
+      }
       const got = await run(request);
       step(2);
       const sealed = await seal(got.secret, request.pk, request.state, request.mode, request.owner, got.cred);

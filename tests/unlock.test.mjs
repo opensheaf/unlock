@@ -241,3 +241,46 @@ test("the hand-off of a popup: the test vector shared with opensheaf-js", async 
   const asEnroll = await seal(bytes("secret"), bytes("pk"), v.state, "popup-enroll", v.owner, v.cred, { privateKey, publicKey });
   assert.deepEqual([b64urlEncode(asEnroll.ct), b64urlEncode(asEnroll.tag)], [v.ct, v.enrollTag]);
 });
+
+// Version 2, two owners at one touch: the second secret of the vector
+// shared with opensheaf-js (tests/github.test.js, VECTOR2), sealed for the
+// second owner with a one-time key of its own.
+const POPUP2 = {
+  esk: "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws", epk: "c7LYt2qptTZgAyvI9di-46OuTjs6f9Sa3oH3NHo0qmg",
+  owner: "b".repeat(51) + "a", secret: "__79_Pv6-fj39vX08_Lx8O_u7ezr6uno5-bl5OPi4eA",
+  ct: "ib0GOq8sfUobf__9-Vwwot4zM6T82n9r9ZVdnlGLulo", tag: "_4P3d-XwSi0QXm8oB8raCpbh75XwRwI3xmIjap7vlYI",
+};
+
+test("a request of version 2: two owners at one touch, to unlock only", () => {
+  const owner2 = "b".repeat(51) + "a";
+  const good = { type: MESSAGES.request, v: 2, state, pk, owners: `${owner},${owner2}`, cred };
+  const r = parseRequest(good);
+  assert.deepEqual([r.v, r.owners, r.owner, r.creds.length], [2, [owner, owner2], owner, 1]);
+  for (const bad of [{ ...good, v: 3 }, { ...good, v: "2" }, { ...good, owners: owner }, { ...good, owners: `${owner},${owner}` },
+                     { ...good, owners: `${owner},${owner2},${"c".repeat(51)}a` }, { ...good, owners: `${owner},x` },
+                     { ...good, owner }, { ...good, cred: "" }, { type: MESSAGES.request, v: 2, state, pk, cred }]) {
+    assert.throws(() => parseRequest(bad), Error, JSON.stringify(bad));
+  }
+  assert.throws(() => parseRequest(good, "popup-enroll"), /one owner at a time/);
+  // a request of version 1 has no v, and an owner
+  assert.equal(parseRequest({ type: MESSAGES.request, state, pk, owner, cred }).v, undefined);
+});
+
+test("version 2: two salts at one assertion, and the vector of the second owner", async () => {
+  const subtle = globalThis.crypto.subtle;
+  const [a, b] = [await expectedSalt(owner), await expectedSalt("b".repeat(51) + "a")];
+  const o = getOptions(a, [new Uint8Array(20)], new Uint8Array(32), b);
+  assert.deepEqual(o.extensions, { prf: { eval: { first: a, second: b } } });
+  assert.deepEqual(getOptions(a, [], new Uint8Array(32)).extensions, { prf: { eval: { first: a } } });
+  const both = { getClientExtensionResults: () => ({ prf: { results: { first: new Uint8Array(32).fill(1).buffer,
+                                                                        second: new Uint8Array(32).fill(2).buffer } } }) };
+  assert.deepEqual(prfSecret(both, "second"), new Uint8Array(32).fill(2));
+  const one = { getClientExtensionResults: () => ({ prf: { results: { first: new Uint8Array(32).buffer } } }) };
+  assert.throws(() => prfSecret(one, "second"), /secret of one owner only/);
+  const v = POPUP2, bytes = (x) => b64urlDecode(x);
+  const privateKey = await subtle.importKey("jwk", { kty: "OKP", crv: "X25519", d: v.esk, x: v.epk },
+                                            { name: "X25519" }, false, ["deriveBits"]);
+  const publicKey = await subtle.importKey("raw", bytes(v.epk), { name: "X25519" }, true, []);
+  const sealed = await seal(bytes(v.secret), bytes(POPUP.pk), POPUP.state, "popup", v.owner, POPUP.cred, { privateKey, publicKey });
+  assert.deepEqual([b64urlEncode(sealed.epk), b64urlEncode(sealed.ct), b64urlEncode(sealed.tag)], [v.epk, v.ct, v.tag]);
+});

@@ -94,9 +94,25 @@ passphrase. When the owner has a passkey already, the manager uses the
 mode `popup` to unlock with it, as `osheaf key enroll` without
 `--new-passkey` does.
 
-A test vector of the popup's answer, in both modes, is shared with the
-tests of opensheaf-js (`tests/github.test.js`), which play the manager's
-side.
+**Two owners at one touch (version 2).** A person who keeps the keys of
+several owners in one wallet may enrol one passkey for two of them (each
+owner's keys locked with the secret of its own salt). The manager then
+sends `{type: "opensheaf-unlock-request", v: 2, state, pk, owners, cred}`,
+`owners` being the two owner names joined by a comma; the page asks for
+one assertion whose PRF extension evaluates both salts (`first` and
+`second`: WebAuthn evaluates at most two), seals each secret as above,
+with its own owner in the authenticated data, and answers `{type:
+"opensheaf-unlock-answer", v: 2, state, cred, sealed: [{owner, epk, ct,
+tag}, ...]}`, in the order of the request. A passkey that gives only the
+first secret is refused, and the owners are unlocked one at a time. A
+request of one owner has no `v` and is the request above, unchanged; a
+page that knows only that request refuses one with `v` (it takes no field
+it does not know), so that the manager and this page may be updated in
+either order. Creating a passkey stays a request of one owner.
+
+A test vector of the popup's answer, in both modes and in version 2, is
+shared with the tests of opensheaf-js (`tests/github.test.js`), which play
+the manager's side.
 
 Its content security policy lets it load nothing from another origin,
 reach no server (`connect-src 'none'`) and send no form

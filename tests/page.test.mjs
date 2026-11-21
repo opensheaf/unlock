@@ -324,3 +324,57 @@ test("a popup closed with no failure says only that; one that answered says noth
   q.els.cancel.onclick();
   q.hide();
 });
+
+test("a popup of version 2: two owners, one assertion with both salts, a secret sealed for each", async () => {
+  const subtle = globalThis.crypto.subtle;
+  const owner2 = "b".repeat(51) + "a";
+  const mine = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const myPk = b64urlEncode(new Uint8Array(await subtle.exportKey("raw", mine.publicKey)));
+  const calls = [];
+  const assertion = { rawId: new Uint8Array(20).fill(7).buffer,
+                      getClientExtensionResults: () => ({ prf: { results: { first: new Uint8Array(32).fill(9).buffer,
+                                                                            second: new Uint8Array(32).fill(8).buffer } } }) };
+  const opener = managerWindow();
+  const p = await page({ hash: POPUP_HASH, opener, webauthn: { get: async (o) => { calls.push(o); return assertion; } } });
+  await p.send({ type: "opensheaf-unlock-request", v: 2, state, pk: myPk, owners: `${owner},${owner2}`, cred });
+  assert.equal(p.els.request.hidden, false);
+  assert.match(p.els.owner.textContent, / and /);
+  assert.match(p.els.what.textContent, /two owners/);
+  await p.els.go.onclick();
+  await settle();
+  assert.equal(calls.length, 1);
+  const salt = async (o) => new Uint8Array(await subtle.digest("SHA-256", new TextEncoder().encode("opensheaf wallet unlock v1 " + o)));
+  assert.deepEqual(calls[0].publicKey.extensions.prf.eval, { first: await salt(owner), second: await salt(owner2) });
+  const { message } = opener.posted[1];
+  assert.deepEqual(Object.keys(message).sort(), ["cred", "sealed", "state", "type", "v"]);
+  assert.equal(message.v, 2);
+  assert.deepEqual(message.sealed.map((s) => s.owner), [owner, owner2]);
+  const open = async (s, o) => {
+    const peer = await subtle.importKey("raw", b64urlDecode(s.epk), { name: "X25519" }, false, []);
+    const shared = await subtle.deriveBits({ name: "X25519", public: peer }, mine.privateKey, 256);
+    const ikm = await subtle.importKey("raw", shared, "HKDF", false, ["deriveBits"]);
+    const both = new Uint8Array(await subtle.deriveBits({ name: "HKDF", hash: "SHA-256",
+      salt: new TextEncoder().encode(state), info: new TextEncoder().encode("opensheaf unlock hand-off v2") }, ikm, 512));
+    const ct = b64urlDecode(s.ct);
+    const mac = await subtle.importKey("raw", both.slice(32), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    const aad = new TextEncoder().encode(`popup|${o}|${message.cred}|${myPk}|${s.epk}`);
+    if (!(await subtle.verify("HMAC", mac, b64urlDecode(s.tag), new Uint8Array([...aad, ...ct])))) throw new Error("tag");
+    return Uint8Array.from(ct, (b, i) => b ^ both[i]);
+  };
+  assert.deepEqual(await open(message.sealed[0], owner), new Uint8Array(32).fill(9));
+  assert.deepEqual(await open(message.sealed[1], owner2), new Uint8Array(32).fill(8));
+  await assert.rejects(open(message.sealed[1], owner), /tag/);
+});
+
+test("a popup of version 2 whose passkey gives one secret only says so, and sends nothing", async () => {
+  const owner2 = "b".repeat(51) + "a";
+  const assertion = { rawId: new Uint8Array(20).fill(7).buffer,
+                      getClientExtensionResults: () => ({ prf: { results: { first: new Uint8Array(32).fill(9).buffer } } }) };
+  const opener = managerWindow();
+  const p = await page({ hash: POPUP_HASH, opener, webauthn: { get: async () => assertion } });
+  await p.send({ type: "opensheaf-unlock-request", v: 2, state, pk, owners: `${owner},${owner2}`, cred });
+  await p.els.go.onclick();
+  await settle();
+  assert.match(p.els.status.textContent, /one at a time/);
+  assert.deepEqual(opener.posted.map((x) => x.message.type), ["opensheaf-unlock-ready", "opensheaf-unlock-status"]);
+});

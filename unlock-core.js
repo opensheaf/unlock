@@ -118,10 +118,36 @@ export function isEnroll(mode) {
 export function parseRequest(data, mode = "popup") {
   if (!POPUP_MODES.includes(mode)) throw new Error("not a mode of a popup");
   if (!data || typeof data !== "object" || data.type !== MESSAGES.request) throw new Error("not a request");
+  if ("v" in data) return parseRequestV2(data, mode);
   const known = new Set(["type", "state", "pk", "owner", "cred"]);
   for (const k of Object.keys(data)) if (!known.has(k)) throw new Error(`unknown field: ${k}`);
   for (const k of ["state", "pk", "owner", "cred"]) if (typeof data[k] !== "string") throw new Error(`no ${k}`);
   return checkRequest(mode, data.state, data.pk, data.owner, data.cred);
+}
+
+// Version 2 of the request (the manager, for two owners at one touch):
+// {type, v: 2, state, pk, owners: "<owner>,<owner>", cred}. WebAuthn's PRF
+// extension derives at most two secrets at one assertion (first, second),
+// one per owner's salt, from the one passkey the person chooses among
+// cred. Only to unlock: a passkey is created for one owner at a time. The
+// answer is {type, v: 2, state, cred, sealed: [{owner, epk, ct, tag}, ...]},
+// each secret sealed as in version 1 with its own owner in the
+// authenticated data. A request of one owner stays a request of version 1,
+// so that an older manager and an older page still understand each other.
+export const MAX_OWNERS = 2;
+
+function parseRequestV2(data, mode) {
+  if (data.v !== 2) throw new Error("not a version of the request that this page takes");
+  if (mode !== "popup") throw new Error("a passkey is created for one owner at a time");
+  const known = new Set(["type", "v", "state", "pk", "owners", "cred"]);
+  for (const k of Object.keys(data)) if (!known.has(k)) throw new Error(`unknown field: ${k}`);
+  for (const k of ["state", "pk", "owners", "cred"]) if (typeof data[k] !== "string") throw new Error(`no ${k}`);
+  const owners = data.owners.split(",");
+  if (owners.length < 2 || owners.length > MAX_OWNERS || new Set(owners).size !== owners.length) {
+    throw new Error(`a request of version 2 names two owners`);
+  }
+  for (const o of owners) if (!OWNER.test(o)) throw new Error("not an owner name");
+  return { ...checkRequest(mode, data.state, data.pk, owners[0], data.cred), v: 2, owners };
 }
 
 function checkRequest(mode, stateGiven, pkGiven, ownerGiven, credGiven) {
@@ -194,13 +220,13 @@ export async function createOptions(owner, challenge, exclude = [], subtle = glo
   };
 }
 
-export function getOptions(salt, creds, challenge) {
+export function getOptions(salt, creds, challenge, second = null) {
   return {
     rpId: RP_ID,
     challenge,
     allowCredentials: creds.map((id) => ({ type: "public-key", id })),
     userVerification: "required",
-    extensions: { prf: { eval: { first: salt } } },
+    extensions: { prf: { eval: second ? { first: salt, second } : { first: salt } } },
   };
 }
 
@@ -229,12 +255,16 @@ export function prfEnabled(created) {
 export const PRF_HELP = "passkeys with PRF are known to work in Safari 18 on macOS 15 and iOS 18 (iCloud Keychain), " +
   "and in Chrome 133+ with Google Password Manager or a security key";
 
-// The PRF secret of an assertion, 32 bytes, or an Error.
-export function prfSecret(assertion) {
+// The PRF secret of an assertion, 32 bytes, or an Error; WHICH is "first"
+// or, for the salt of a second owner, "second".
+export function prfSecret(assertion, which = "first") {
   const prf = assertion.getClientExtensionResults().prf;
-  const first = prf && prf.results && prf.results.first;
-  if (!first) throw new Error(`this browser or passkey gave no PRF secret (${PRF_HELP})`);
-  const bytes = new Uint8Array(first);
+  const got = prf && prf.results && prf.results[which];
+  if (!got) {
+    throw new Error(which === "first" ? `this browser or passkey gave no PRF secret (${PRF_HELP})`
+      : "this browser or passkey gave the secret of one owner only: unlock the owners one at a time");
+  }
+  const bytes = new Uint8Array(got);
   if (bytes.length !== 32) throw new Error("the PRF secret is not 32 bytes");
   return bytes;
 }
