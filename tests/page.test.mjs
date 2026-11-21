@@ -40,7 +40,8 @@ async function page({ hash = "", query = "", framed = false, x25519 = true, weba
     for (const [type, f] of listeners) if (type === "message") await f({ data, origin, source });
     await new Promise((r) => setTimeout(r, 5));
   };
-  return { els, went, replaced, send, closed };
+  const hide = () => { for (const [type, f] of listeners) if (type === "pagehide") f({}); };
+  return { els, went, replaced, send, closed, hide };
 }
 
 const settle = async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 1)); };
@@ -98,20 +99,37 @@ test("the button waits for the code to be checked; then WebAuthn, and the answer
   assert.match(p.went[0], /^http:\/\/127\.0\.0\.1:49992\/callback\?state=[^&]+&epk=[^&]+&ct=[^&]+&tag=[^&]+&cred=/);
 });
 
-test("enroll: the owner's passkeys are excluded, and PRF must be enabled", async () => {
-  const created = [];
+test("enroll: the owner's passkeys are excluded, and PRF must be there, said at creation or at the assertion", async () => {
+  const created = [], asserted = [];
   const make = (enabled) => async (o) => {
     created.push(o);
     return { rawId: new Uint8Array(20).fill(8).buffer, getClientExtensionResults: () => ({ prf: enabled }) };
   };
-  for (const prf of [undefined, {}, { enabled: false }]) {
-    const p = await page({ hash: request({ mode: "enroll" }), webauthn: { create: make(prf), get: () => assert.fail() } });
+  const noSecret = async (o) => { asserted.push(o); return { rawId: new Uint8Array(20).fill(8).buffer, getClientExtensionResults: () => ({}) }; };
+  // PRF said to be off at creation: no assertion
+  const off = await page({ hash: request({ mode: "enroll" }), webauthn: { create: make({ enabled: false }), get: () => assert.fail() } });
+  off.els.same.checked = true;
+  await off.els.go.onclick();
+  await settle();
+  assert.match(off.els.status.textContent, /does not support the PRF extension.*Safari 18/);
+  assert.deepEqual(off.went, []);
+  // not said at creation: the assertion is tried, and tells
+  for (const prf of [undefined, {}]) {
+    const p = await page({ hash: request({ mode: "enroll" }), webauthn: { create: make(prf), get: noSecret } });
     p.els.same.checked = true;
     await p.els.go.onclick();
     await settle();
-    assert.match(p.els.status.textContent, /PRF/);
+    assert.match(p.els.status.textContent, /the passkey was made, but this browser or passkey gave no PRF secret \(.*Safari 18/);
     assert.deepEqual(p.went, []);
   }
+  assert.equal(asserted.length, 2);
+  const yes = await page({ hash: request({ mode: "enroll" }), webauthn: { create: make(undefined),
+    get: async () => ({ rawId: new Uint8Array(20).fill(8).buffer,
+                        getClientExtensionResults: () => ({ prf: { results: { first: new Uint8Array(32).fill(3).buffer } } }) }) } });
+  yes.els.same.checked = true;
+  await yes.els.go.onclick();
+  await settle();
+  assert.equal(yes.went.length, 1);
   assert.equal(created[0].publicKey.excludeCredentials.length, 1);
   assert.equal(created[0].publicKey.rp.id, "unlock.opensheaf.org");
   const p = await page({ hash: request({ mode: "enroll" }), webauthn: {
@@ -273,4 +291,36 @@ test("the old opener, opensheaf.org, may no longer open the popup", async () => 
   const p = await page({ hash: "#mode=popup&origin=" + encodeURIComponent("https://opensheaf.org"), opener });
   assert.match(p.els.status.textContent, /not a page that may ask/);
   assert.deepEqual(opener.posted, []);
+});
+
+test("a popup tells its opener what failed, and, closed after a failure, why", async () => {
+  const opener = managerWindow();
+  const webauthn = { create: async () => { const e = new Error("The operation either timed out or was not allowed.");
+                                           e.name = "NotAllowedError"; throw e; }, get: () => assert.fail() };
+  const p = await page({ hash: "#mode=popup-enroll&origin=" + encodeURIComponent(MANAGER), opener, webauthn });
+  await p.send({ type: "opensheaf-unlock-request", state, pk, owner, cred: "" });
+  await p.els.go.onclick();
+  await settle();
+  const error = "NotAllowedError: The operation either timed out or was not allowed.";
+  assert.deepEqual(opener.posted[1], { message: { type: "opensheaf-unlock-status", state, error }, targetOrigin: MANAGER });
+  assert.equal(p.els.go.disabled, false);
+  p.hide();
+  assert.deepEqual(opener.posted[2], { message: { type: "opensheaf-unlock-answer", state,
+                                                  error: `the window was closed after: ${error}` }, targetOrigin: MANAGER });
+  p.hide();
+  assert.equal(opener.posted.length, 3);
+});
+
+test("a popup closed with no failure says only that; one that answered says nothing more", async () => {
+  const opener = managerWindow();
+  const p = await page({ hash: "#mode=popup-enroll&origin=" + encodeURIComponent(MANAGER), opener,
+                         webauthn: { create: () => assert.fail(), get: () => assert.fail() } });
+  await p.send({ type: "opensheaf-unlock-request", state, pk, owner, cred: "" });
+  p.hide();
+  assert.deepEqual(opener.posted[1].message, { type: "opensheaf-unlock-answer", state, error: "the window was closed" });
+  const q = await page({ hash: "#mode=popup-enroll&origin=" + encodeURIComponent(MANAGER), opener: managerWindow(),
+                         webauthn: { create: () => assert.fail(), get: () => assert.fail() } });
+  await q.send({ type: "opensheaf-unlock-request", state, pk, owner, cred: "" });
+  q.els.cancel.onclick();
+  q.hide();
 });

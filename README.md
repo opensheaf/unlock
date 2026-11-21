@@ -22,8 +22,10 @@ SHA-256(`opensheaf unlock code v1` ‖ state ‖ pk) modulo 10⁶. Its button st
 disabled until the user ticks "The terminal shows the same code". Then it
 creates a passkey for `unlock.opensheaf.org` named after the owner
 (excluding the passkeys the owner has already, `cred=`, and refusing a
-passkey whose PRF extension is not enabled), or uses one of those named,
-and derives its secret with the WebAuthn PRF extension.
+passkey whose PRF extension the browser says is not enabled; a browser
+that does not say, such as Chrome with iCloud Keychain, is tried by the
+assertion that follows, which gives the secret or not), or uses one of
+those named, and derives its secret with the WebAuthn PRF extension.
 
 It hands the secret back by going to
 `http://127.0.0.1:<port>/callback?state=…&epk=…&ct=…&tag=…&cred=…` (with
@@ -71,12 +73,20 @@ passkey. The page then:
    with it, and then sends `{type: "opensheaf-unlock-done"}`, upon which
    the page closes.
 
+What fails in the popup (WebAuthn refused, no PRF, a passkey excluded) is
+shown there, where the person may try again, and posted to the opener as
+`{type: "opensheaf-unlock-status", state, error}`, for the manager to say:
+information only, never a secret, and never an answer. A popup closed
+without an answer posts, as its window goes (`pagehide`), the answer
+`{..., error}` "the window was closed after: <the last failure>" (or "the
+window was closed").
+
 To set up a key wallet from the browser, the manager opens the page with
 `#mode=popup-enroll&origin=...` instead. The exchange is the same, but the
 request's `cred` names the passkeys the owner has already (possibly none),
 which WebAuthn is asked to exclude; the page creates a passkey for
 `unlock.opensheaf.org` named after the owner, as for `osheaf key enroll`
-(refusing a passkey whose PRF extension is not enabled), derives its
+(refusing a passkey whose PRF extension is not enabled, as above), derives its
 secret, and seals it with the mode `popup-enroll` in the authenticated
 data: an answer of one mode is never taken for another. The manager then
 adds the passkey's lock to the keys of the wallet, which it opens with the

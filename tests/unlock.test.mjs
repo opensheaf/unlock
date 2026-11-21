@@ -160,8 +160,10 @@ test("PRF support and the PRF secret (WebAuthn mocked)", async () => {
   assert.throws(() => prfSecret({ getClientExtensionResults: () => ({ prf: { results: { first: new Uint8Array(16) } } }) }));
   const created = (prf) => ({ getClientExtensionResults: () => prf });
   assert.equal(prfEnabled(created({ prf: { enabled: true } })), true);
-  for (const r of [{}, { prf: {} }, { prf: { enabled: false } }, { prf: { enabled: "yes" } }])
-    assert.equal(prfEnabled(created(r)), false, JSON.stringify(r));
+  assert.equal(prfEnabled(created({ prf: { enabled: false } })), false);
+  // not said (Chrome with iCloud Keychain, for one): the assertion tells
+  for (const r of [{}, { prf: {} }, { prf: { enabled: "yes" } }])
+    assert.equal(prfEnabled(created(r)), null, JSON.stringify(r));
   assert.equal(await prfSupported(undefined), null);
   assert.equal(await prfSupported({}), null);
   assert.equal(await prfSupported({ getClientCapabilities: async () => ({ "extension:prf": false }) }), false);

@@ -60,8 +60,11 @@ export const POPUP_OPENERS = ["https://manager.opensheaf.org"];
 // answer), "popup-enroll" creates a passkey (cred: those the owner has
 // already, excluded, possibly none) and derives its secret.
 export const POPUP_MODES = ["popup", "popup-enroll"];
+// status: what went wrong in the popup, for the opener to say (an error that
+// the person may try again from); informational only, it carries no secret.
 export const MESSAGES = { ready: "opensheaf-unlock-ready", request: "opensheaf-unlock-request",
-                          answer: "opensheaf-unlock-answer", done: "opensheaf-unlock-done" };
+                          answer: "opensheaf-unlock-answer", done: "opensheaf-unlock-done",
+                          status: "opensheaf-unlock-status" };
 const LOCAL = /^http:\/\/(localhost|127\.0\.0\.1)(:[0-9]{1,5})?$/;
 
 export function openerAllowed(origin, pageOrigin = "") {
@@ -213,18 +216,24 @@ export async function prfSupported(pkc = globalThis.PublicKeyCredential) {
   }
 }
 
-// A passkey just created is used only if the browser says that PRF is
-// enabled for it: anything but true is a failure.
+// Whether the browser says that PRF is enabled for a passkey just created:
+// true, false, or null when it does not say (some browsers with some
+// providers, such as Chrome with iCloud Keychain, report PRF only at an
+// assertion). Only false is a failure; otherwise the assertion that follows
+// tells, by giving the secret or not.
 export function prfEnabled(created) {
   const prf = created.getClientExtensionResults().prf;
-  return !!prf && prf.enabled === true;
+  return prf && typeof prf.enabled === "boolean" ? prf.enabled : null;
 }
+
+export const PRF_HELP = "passkeys with PRF are known to work in Safari 18 on macOS 15 and iOS 18 (iCloud Keychain), " +
+  "and in Chrome 133+ with Google Password Manager or a security key";
 
 // The PRF secret of an assertion, 32 bytes, or an Error.
 export function prfSecret(assertion) {
   const prf = assertion.getClientExtensionResults().prf;
   const first = prf && prf.results && prf.results.first;
-  if (!first) throw new Error("this browser or passkey does not support the PRF extension");
+  if (!first) throw new Error(`this browser or passkey gave no PRF secret (${PRF_HELP})`);
   const bytes = new Uint8Array(first);
   if (bytes.length !== 32) throw new Error("the PRF secret is not 32 bytes");
   return bytes;

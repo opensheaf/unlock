@@ -13,7 +13,7 @@ if (FRAGMENT || QUERY) history.replaceState(null, "", location.pathname);
 
 import { parseParams, parseRequest, expectedSalt, confirmationCode, createOptions, getOptions, prfSupported, prfEnabled,
          prfSecret, seal, answerUrl, shortName, x25519Available, b64urlEncode, isEnroll, RP_ID, MESSAGES,
-         POPUP_MODES } from "./unlock-core.js";
+         POPUP_MODES, PRF_HELP } from "./unlock-core.js";
 
 const $ = (id) => document.getElementById(id);
 const KNOWN_GOOD = "known to work: Safari 17+, Chrome 133+, Firefox 130+";
@@ -55,7 +55,9 @@ async function derive(params, salt, creds) {
 async function run(params) {
   const salt = await expectedSalt(params.owner);
   if (isEnroll(params.mode)) {
-    if ((await prfSupported()) === false) throw new Error("this browser does not support the PRF extension of passkeys");
+    if ((await prfSupported()) === false) {
+      throw new Error(`this browser does not support the PRF extension of passkeys (${PRF_HELP})`);
+    }
     let created;
     try {
       created = await navigator.credentials.create({
@@ -70,9 +72,17 @@ async function run(params) {
       }
       throw e;
     }
-    if (!prfEnabled(created)) throw new Error("this passkey does not support the PRF extension");
+    if (prfEnabled(created) === false) {
+      throw new Error(`this passkey provider does not support the PRF extension (${PRF_HELP}); delete the passkey ` +
+                      `just made for ${RP_ID} in your passwords, and try another browser or provider`);
+    }
     say("The passkey is made. Once more, to derive its secret…");
-    return derive(params, salt, [new Uint8Array(created.rawId)]);
+    try {
+      return await derive(params, salt, [new Uint8Array(created.rawId)]);
+    } catch (e) {
+      e.message = `the passkey was made, but ${e.message}`;
+      throw e;
+    }
   }
   return derive(params, salt, params.creds);
 }
@@ -179,7 +189,15 @@ function popup(origin, mode) {
 }
 
 async function showPopup(request, origin, post) {
-  const failed = (error) => post({ type: MESSAGES.answer, state: request.state, error });
+  let answered = false, lastError = "";
+  const failed = (error) => { answered = true; post({ type: MESSAGES.answer, state: request.state, error }); };
+  // what failed is told to the manager as it happens (the person may try
+  // again here), and, if the window is closed without an answer, as the
+  // final answer: the manager then says why, not only that it was closed
+  const status = (error) => { lastError = error; post({ type: MESSAGES.status, state: request.state, error }); };
+  window.addEventListener("pagehide", () => {
+    if (!answered) failed(lastError ? `the window was closed after: ${lastError}` : "the window was closed");
+  });
   if (!(await x25519Available())) {
     say("This browser has no X25519 in WebCrypto, and cannot hand the key to the manager securely ("
         + KNOWN_GOOD + ").", "bad");
@@ -223,12 +241,14 @@ async function showPopup(request, origin, post) {
       step(2);
       const sealed = await seal(got.secret, request.pk, request.state, request.mode, request.owner, got.cred);
       got.secret.fill(0);
+      answered = true;
       post({ type: MESSAGES.answer, state: request.state, cred: got.cred, epk: b64urlEncode(sealed.epk),
              ct: b64urlEncode(sealed.ct), tag: b64urlEncode(sealed.tag) });
       say(`Done here. Type the code ${code} in the manager; this window closes once it has the ${enroll ? "secret" : "key"}.`);
     } catch (e) {
       step(0);
       say(`${e.name || "Error"}: ${e.message}. Try again, or cancel.`, "bad");
+      status(`${e.name || "Error"}: ${e.message}`);
       go.disabled = cancel.disabled = false;
     }
   };
