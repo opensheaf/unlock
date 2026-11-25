@@ -19,7 +19,10 @@ refuses anything else (and refuses to run inside a frame). It computes the
 PRF salt from the owner, SHA-256 of `opensheaf wallet unlock v1 ` and the
 owner name, and shows the confirmation code, the first four bytes of
 SHA-256(`opensheaf unlock code v1` ‖ state ‖ pk) modulo 10⁶. Its button stays
-disabled until the user ticks "The terminal shows the same code". Then it
+disabled until the user ticks "The terminal shows the same code". Since
+any page can open this one with a request of its own, it says first to
+close it when no terminal shows the code, and shows the port of
+`127.0.0.1` the secret would go to. Then it
 creates a passkey for `unlock.opensheaf.org` named after the owner
 (excluding the passkeys the owner has already, `cred=`, and refusing a
 passkey whose PRF extension the browser says is not enabled; a browser

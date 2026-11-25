@@ -52,6 +52,7 @@ test("the request leaves the address at once", async () => {
   assert.deepEqual(p.replaced, ["/"]);
   assert.equal(p.els.request.hidden, false);
   assert.equal(p.els.code.textContent, await confirmationCode(state, Uint8Array.from(atob(pk.replace(/-/g, "+").replace(/_/g, "/") + "="), (c) => c.charCodeAt(0))));
+  assert.equal(p.els.port.textContent, "49992");   // the port the secret would go to, shown
   assert.deepEqual(p.went, []);
 });
 

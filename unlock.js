@@ -132,6 +132,7 @@ async function main() {
   const owner = $("owner");
   owner.textContent = shortName(params.owner);
   owner.title = params.owner;
+  $("port").textContent = String(params.port);
   $("what").textContent = enroll
     ? `create a passkey for ${RP_ID}, named after this owner, which will unlock its keys with Touch ID`
     : "unlock the keys of this owner with your passkey";

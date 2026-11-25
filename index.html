@@ -26,10 +26,11 @@
       <p class="code" id="code"></p>
       <p id="same-box"><label><input type="checkbox" id="same"> The terminal shows the same code</label></p>
     </div>
-    <p id="cli-note">If you did not just run <code>osheaf key enroll</code> or a command that needs your keys, or if the
-    terminal shows another code, close this page. The secret goes only to <code>osheaf</code> on this
-    computer (<code>127.0.0.1</code>), encrypted to a one-time key of <code>osheaf</code>, never to a server;
-    the passphrase keeps working.</p>
+    <p id="cli-note"><strong>If no terminal of yours shows this code now, close this page:</strong> any web page can
+    open it with a request of its own. Close it too if you did not just run <code>osheaf key enroll</code> or a
+    command that needs your keys, or if the terminal shows another code. The secret goes only to the program
+    listening on port <code id="port"></code> of this computer (<code>127.0.0.1</code>), which should be
+    <code>osheaf</code>, encrypted to its one-time key, never to a server; the passphrase keeps working.</p>
     <p id="popup-note" hidden>If you did not just ask the manager to sign, close this window. After Touch ID,
     type this code in the manager: it opens the key only with it. The secret goes only to the manager's page,
     at the address above, encrypted to a one-time key of that page, never to a server, and stays in its
